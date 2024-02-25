@@ -1,5 +1,6 @@
 {
   "name": "fluxeclient",
+  "author": "M.K",
   "version": "0.1.0",
   "private": true,
   "dependencies": {
