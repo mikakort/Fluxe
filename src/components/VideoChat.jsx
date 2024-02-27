@@ -2,7 +2,12 @@ import React, { useEffect, useCallback, useState } from 'react';
 import ReactPlayer from 'react-player';
 import peer from '../service/peer';
 
-const Cameras = ({ roomId, socket, to }) => {
+const VideoChat = ({ roomId, socket, to }) => {
+  // Chat vars
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+
+  // Cam vars
   const [remoteSocketId, setRemoteSocketId] = useState(null);
   const [myStream, setMyStream] = useState();
   const [remoteStream, setRemoteStream] = useState();
@@ -111,19 +116,78 @@ const Cameras = ({ roomId, socket, to }) => {
     }
   }, [socket, handleIncommingCall, handleCallAccepted, handleNegoNeedIncomming, handleNegoNeedFinal]);
 
+  // Chat funcs
+
+  useEffect(() => {
+    if (socket) {
+      socket.on('message', (data) => {
+        const message = data.text;
+        if (message) {
+          setMessages((messages) => {
+            return [...messages, '[Guest] ' + message];
+          });
+        }
+      });
+
+      return () => {
+        socket.close();
+      };
+    }
+  }, [socket]);
+
+  const handleSend = () => {
+    socket.emit('messagetoserver', roomId, input, to);
+
+    setMessages((messages) => {
+      return [...messages, '[Me] ' + input];
+    });
+
+    setInput('');
+  };
+
+  const handleKeyPress = (event) => {
+    if (event.key === 'Enter') {
+      handleSend();
+    }
+  };
+
   return (
-    <div className="camholder">
-      <div className="video">
-        <ReactPlayer playing url={remoteStream} />
+    <div className="main">
+      <div className="camholder">
+        <div className="video">
+          <ReactPlayer playing url={remoteStream} />
+        </div>
+
+        <button onClick={handleCallUser}>CALL</button>
+
+        <div className="video">
+          <ReactPlayer playing url={myStream} />
+        </div>
       </div>
 
-      <button onClick={handleCallUser}>CALL</button>
-
-      <div className="video">
-        <ReactPlayer playing url={myStream} />
+      <div className="chat">
+        <div className="chatbox">
+          {messages.map((message, index) => (
+            <p key={index}>{message}</p>
+          ))}
+        </div>
+        <div className="chat-input">
+          <input
+            type="text"
+            name="inputBox"
+            placeholder="Enter your message here"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyPress}
+          />
+          <button type="button" onClick={handleSend}>
+            Send
+          </button>
+          <button type="submit">Skip</button>
+        </div>
       </div>
     </div>
   );
 };
 
-export default Cameras;
+export default VideoChat;

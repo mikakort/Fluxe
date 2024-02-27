@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import './App.css';
 import Header from './Header';
 import io from 'socket.io-client';
-import Chatbox from './Chatbox';
-import Cameras from './Cameras';
+import VideoChat from './VideoChat';
 
 function Home() {
   const [socket, setSocket] = useState(null);
@@ -39,10 +38,10 @@ function Home() {
   return (
     <div className="App">
       <Header />
-      <div className="main">
-        <Cameras roomId={roomId} socket={socket} to={to} />
-        <Chatbox roomId={roomId} socket={socket} to={to} />
-      </div>
+      {/* <div className="main"> */}
+      <VideoChat roomId={roomId} socket={socket} to={to} />
+      {/* <Chatbox roomId={roomId} socket={socket} to={to} /> */}
+      {/* </div> */}
     </div>
   );
 }
