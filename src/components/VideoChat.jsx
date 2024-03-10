@@ -2,7 +2,7 @@ import React, { useEffect, useCallback, useState } from 'react';
 import ReactPlayer from 'react-player';
 import peer from '../service/peer';
 
-const VideoChat = ({ roomId, socket, to }) => {
+const VideoChat = ({ roomId, socket, to, setBegin }) => {
   // Chat vars
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -12,35 +12,67 @@ const VideoChat = ({ roomId, socket, to }) => {
   const [myStream, setMyStream] = useState();
   const [remoteStream, setRemoteStream] = useState();
 
+  const [skOrCl, setSkOrCl] = useState('Start');
+
   useEffect(() => {
     setRemoteSocketId(to);
   }, [to]);
 
-  const handleCallUser = useCallback(async () => {
-    if (socket) {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: true,
-      });
-      const offer = await peer.getOffer();
-      socket.emit('user:call', { to: remoteSocketId, offer });
-      setMyStream(stream);
-    }
-  }, [remoteSocketId, socket]);
+  const start = () => {
+    if (skOrCl === 'Start') {
+      console.log('socket begin');
+      setBegin(true);
+    } else if (skOrCl === 'Skip') {
+      console.log('skiping');
+      // MISSING FUNCTIONALITY
 
-  const handleIncommingCall = useCallback(
-    async ({ from, offer }) => {
-      if (socket) {
-        setRemoteSocketId(from);
+      /*
+      1. Close WebRTC
+      2. Close socket, then reset all variables: socket, begin, room...
+      3. Emit disconnect, automatically done after socket close
+      4. *SERVER SIDE*: delete room after both users are out
+      */
+    }
+  };
+
+  const handleCallUser = useCallback(
+    async (data) => {
+      console.log(data.peerServer);
+      if (socket && data.peerServer === 'A') {
+        console.log(`Peer: ${socket.id} sends offer`);
+        const room = data.room;
+        setSkOrCl('Skip');
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: true,
           video: true,
         });
+        const offer = await peer.getOffer();
         setMyStream(stream);
-        console.log(`Incoming Call`, from, offer);
-        const ans = await peer.getAnswer(offer);
-        socket.emit('call:accepted', { to: from, ans });
+        console.log(`Peer: ${socket.id} sets stream`);
+        socket.emit('user:call', { roomId: room, offer });
+        console.log(`Peer: ${socket.id} sends offer through server`);
+      } else if (data.peerServer === 'B') {
+        console.log('Peer B, wait for call');
       }
+    },
+    [socket]
+  );
+
+  const handleIncommingCall = useCallback(
+    async ({ from, offer }) => {
+      console.log(`Peer: ${socket.id} receives offer`);
+      setRemoteSocketId(from);
+      console.log(`Peer: ${socket.id} sets remote socket Id`);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
+      });
+      setMyStream(stream);
+      console.log(`Incoming Call`, from, offer);
+      const ans = await peer.getAnswer(offer);
+      console.log(`Peer: ${socket.id} sets remote description`);
+      socket.emit('call:accepted', { to: from, ans });
+      console.log(`Peer: ${socket.id} sends answer`);
     },
     [socket]
   );
@@ -56,20 +88,42 @@ const VideoChat = ({ roomId, socket, to }) => {
   const handleCallAccepted = useCallback(
     ({ from, ans }) => {
       peer.setLocalDescription(ans);
-      console.log('Call Accepted!');
+      console.log(`Peer: ${socket.id} gets accepted`);
       sendStreams();
+      console.log(`Peer: ${socket.id} sent streams`);
     },
-    [sendStreams]
+    [sendStreams, socket]
   );
 
   const handleNegoNeeded = useCallback(async () => {
     if (socket) {
+      console.log('Emitting negotiation');
       const offer = await peer.getOffer();
       socket.emit('peer:nego:needed', { offer, to: remoteSocketId });
     }
   }, [remoteSocketId, socket]);
 
   useEffect(() => {
+    // Listen for connection state changes
+    peer.peer.onconnectionstatechange = (event) => {
+      console.log(`Connection state change: ${peer.peer.connectionState}`);
+    };
+
+    // Listen for signaling state changes
+    peer.peer.onsignalingstatechange = (event) => {
+      console.log(`Signaling state change: ${peer.peer.signalingState}`);
+    };
+
+    // Listen for ICE gathering state changes
+    peer.peer.onicegatheringstatechange = (event) => {
+      console.log(`ICE gathering state change: ${peer.peer.iceGatheringState}`);
+    };
+
+    // Listen for ICE connection state changes
+    peer.peer.oniceconnectionstatechange = (event) => {
+      console.log(`ICE connection state change: ${peer.peer.iceConnectionState}`);
+    };
+
     peer.peer.addEventListener('negotiationneeded', handleNegoNeeded);
     return () => {
       peer.peer.removeEventListener('negotiationneeded', handleNegoNeeded);
@@ -78,6 +132,7 @@ const VideoChat = ({ roomId, socket, to }) => {
 
   const handleNegoNeedIncomming = useCallback(
     async ({ from, offer }) => {
+      console.log('Answering negotiation');
       if (socket) {
         const ans = await peer.getAnswer(offer);
         socket.emit('peer:nego:done', { to: from, ans });
@@ -87,6 +142,7 @@ const VideoChat = ({ roomId, socket, to }) => {
   );
 
   const handleNegoNeedFinal = useCallback(async ({ ans }) => {
+    console.log('Negotiation confirmation');
     await peer.setLocalDescription(ans);
   }, []);
 
@@ -95,26 +151,28 @@ const VideoChat = ({ roomId, socket, to }) => {
       const remoteStream = ev.streams;
       console.log('GOT TRACKS!!');
       setRemoteStream(remoteStream[0]);
+      console.log(remoteStream[0]);
+      console.log(ev);
     });
   }, []);
 
   useEffect(() => {
     if (socket) {
-      // socket.on('user:joined', handleUserJoined);
+      socket.on('user:joined', handleCallUser);
       socket.on('incomming:call', handleIncommingCall);
       socket.on('call:accepted', handleCallAccepted);
       socket.on('peer:nego:needed', handleNegoNeedIncomming);
       socket.on('peer:nego:final', handleNegoNeedFinal);
 
       return () => {
-        // socket.off('user:joined', handleUserJoined);
+        socket.off('user:joined', handleCallUser);
         socket.off('incomming:call', handleIncommingCall);
         socket.off('call:accepted', handleCallAccepted);
         socket.off('peer:nego:needed', handleNegoNeedIncomming);
         socket.off('peer:nego:final', handleNegoNeedFinal);
       };
     }
-  }, [socket, handleIncommingCall, handleCallAccepted, handleNegoNeedIncomming, handleNegoNeedFinal]);
+  }, [socket, handleCallUser, handleIncommingCall, handleCallAccepted, handleNegoNeedIncomming, handleNegoNeedFinal]);
 
   // Chat funcs
 
@@ -158,8 +216,6 @@ const VideoChat = ({ roomId, socket, to }) => {
           <ReactPlayer playing url={remoteStream} />
         </div>
 
-        <button onClick={handleCallUser}>CALL</button>
-
         <div className="video">
           <ReactPlayer playing url={myStream} />
         </div>
@@ -183,7 +239,9 @@ const VideoChat = ({ roomId, socket, to }) => {
           <button type="button" onClick={handleSend}>
             Send
           </button>
-          <button type="submit">Skip</button>
+          <button type="submit" onClick={start}>
+            {skOrCl}
+          </button>
         </div>
       </div>
     </div>

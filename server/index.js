@@ -60,22 +60,18 @@ io.on('connection', (socket) => {
     room.save().then(() => {
       io.to(room.users[0].socketId).emit('user:joined', {
         room: room.id,
-        // socket: room.users[0].socketId,
         remote: room.users[1].socketId,
-        // userId: room.users[0].id,
-        // guestId: room.users[1].id,
+        peerServer: 'A', // fixing double call problem
       });
       io.to(room.users[1].socketId).emit('user:joined', {
         room: room.id,
-        // socket: room.users[1].socketId,
         remote: room.users[0].socketId,
-        // userId: room.users[1].id,
-        // guestId: room.users[0].id,
+        peerServer: 'B', // fixing double call problem
       });
     });
     console.log(room.id);
-    console.log(room.users[0].id);
-    console.log(room.users[1].id);
+    console.log(room.users[0].socketId + ' A');
+    console.log(room.users[1].socketId + ' B');
   }
 
   socket.on('messagetoserver', async (roomId, message, to) => {
@@ -93,8 +89,13 @@ io.on('connection', (socket) => {
     await room.save();
   });
 
-  socket.on('user:call', ({ to, offer }) => {
-    io.to(to).emit('incomming:call', { from: socket.id, offer });
+  socket.on('user:call', async ({ roomId, offer }) => {
+    const room = await Room.findOne({ id: roomId });
+    if (room.users[0].socketId) {
+      const to = room.users[1].socketId;
+      console.log('calling ' + to);
+      io.to(to).emit('incomming:call', { from: socket.id, offer });
+    }
   });
 
   socket.on('call:accepted', ({ to, ans }) => {

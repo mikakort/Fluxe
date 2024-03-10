@@ -8,40 +8,40 @@ function Home() {
   const [socket, setSocket] = useState(null);
   const [roomId, setRoomId] = useState(null);
   const [to, setTo] = useState(null);
+  const [begin, setBegin] = useState(false);
 
   useEffect(() => {
-    console.log('Setting up socket connection');
-    const newSocket = io('http://192.168.2.106:3001');
-    setSocket(newSocket);
-    console.log(newSocket);
+    if (begin) {
+      console.log('Setting up socket connection');
+      const newSocket = io('http://192.168.2.106:3001');
+      setSocket(newSocket);
+      console.log(newSocket);
 
-    newSocket.on('connect', () => {
-      console.log('Successfully connected!');
-    });
+      newSocket.on('connect', () => {
+        console.log('Successfully connected!');
+      });
 
-    newSocket.on('user:joined', (data) => {
-      console.log('Successfully connected!');
+      newSocket.on('user:joined', (data) => {
+        console.log('user:joined');
 
-      const roomId = data.room;
-      const to = data.remote;
+        const roomId = data.room;
+        const to = data.remote;
 
-      setRoomId(roomId);
-      setTo(to);
-    });
+        setRoomId(roomId);
+        setTo(to);
+      });
 
-    return () => {
-      console.log('Closing socket connection');
-      newSocket.close();
-    };
-  }, []);
+      return () => {
+        console.log('Closing socket connection');
+        newSocket.close();
+      };
+    }
+  }, [begin]);
 
   return (
     <div className="App">
       <Header />
-      {/* <div className="main"> */}
-      <VideoChat roomId={roomId} socket={socket} to={to} />
-      {/* <Chatbox roomId={roomId} socket={socket} to={to} /> */}
-      {/* </div> */}
+      <VideoChat roomId={roomId} socket={socket} to={to} setBegin={setBegin} />
     </div>
   );
 }
