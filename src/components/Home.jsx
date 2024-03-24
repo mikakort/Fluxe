@@ -13,7 +13,7 @@ function Home() {
   useEffect(() => {
     if (begin) {
       console.log('Setting up socket connection');
-      const newSocket = io('http://192.168.2.106:3001');
+      const newSocket = io('localhost:3001');
       setSocket(newSocket);
       console.log(newSocket);
 
@@ -41,7 +41,15 @@ function Home() {
   return (
     <div className="App">
       <Header />
-      <VideoChat roomId={roomId} socket={socket} to={to} setBegin={setBegin} />
+      <VideoChat
+        roomId={roomId}
+        socket={socket}
+        to={to}
+        setBegin={setBegin}
+        setSocket={setSocket}
+        setRoomId={setRoomId}
+        setTo={setTo}
+      />
     </div>
   );
 }

@@ -39,11 +39,14 @@ const roomSchema = new mongoose.Schema({
   id: String,
   users: [userSchema],
   chatLog: [{ message: String, timestamp: Date }],
+  status: String,
 });
 
 const Room = mongoose.model('Room', roomSchema);
 
 let usersQueue = [];
+
+let recentDisc = [];
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
@@ -51,35 +54,39 @@ io.on('connection', (socket) => {
   // implement start here
   usersQueue.push(user);
 
-  if (usersQueue.length >= 2) {
-    const room = new Room({
-      id: uuidv4(),
-      users: [usersQueue.shift(), usersQueue.shift()],
-      chatLog: [],
-    });
-    room.save().then(() => {
-      io.to(room.users[0].socketId).emit('user:joined', {
-        room: room.id,
-        remote: room.users[1].socketId,
-        peerServer: 'A', // fixing double call problem
+  const roomInit = () => {
+    if (usersQueue.length >= 2) {
+      const room = new Room({
+        id: uuidv4(),
+        users: [usersQueue.shift(), usersQueue.shift()],
+        chatLog: [],
+        status: 'open',
       });
-      io.to(room.users[1].socketId).emit('user:joined', {
-        room: room.id,
-        remote: room.users[0].socketId,
-        peerServer: 'B', // fixing double call problem
+      room.save().then(() => {
+        io.to(room.users[0].socketId).emit('user:joined', {
+          room: room.id,
+          remote: room.users[1].socketId,
+          peerServer: 'A', // fixing double call problem
+        });
+        io.to(room.users[1].socketId).emit('user:joined', {
+          room: room.id,
+          remote: room.users[0].socketId,
+          peerServer: 'B', // fixing double call problem
+        });
       });
-    });
-    console.log(room.id);
-    console.log(room.users[0].socketId + ' A');
-    console.log(room.users[1].socketId + ' B');
-  }
+      console.log(room.id);
+      console.log(room.users[0].socketId + ' A');
+      console.log(room.users[1].socketId + ' B');
+    }
+  };
+  roomInit();
 
   socket.on('messagetoserver', async (roomId, message, to) => {
     console.log(message);
 
     const room = await Room.findOne({ id: roomId });
     if (!room) {
-      socket.emit('error', 'Room not found');
+      console.log('room not found');
       return;
     }
 
@@ -112,23 +119,60 @@ io.on('connection', (socket) => {
     io.to(to).emit('peer:nego:final', { from: socket.id, ans });
   });
 
-  socket.on('disconnect', async () => {
-    console.log('User disconnected:', socket.id);
+  socket.on('user:disconnect', async () => {
+    console.log('user:disconnect ', socket.id);
+
     // Find the room the user was in
     const room = await Room.findOne({ 'users.socketId': socket.id });
-    if (!room) return;
+    if (!room) {
+      console.log('no room');
+      return;
+    }
 
-    // Remove the user from the room
-    room.users = room.users.filter((user) => user.socketId !== socket.id);
-    await room.save();
+    const arg = (id) => id.socketId !== socket.id;
+    const peerIndex = room.users.findIndex(arg);
+    console.log(peerIndex);
+    let guest = room.users[peerIndex].socketId;
 
-    // If there's a remaining user, add them back to the queue
-    if (room.users.length > 0) {
-      usersQueue.push(room.users[0]);
-      io.to(room.users[0].socketId).emit(
-        'message',
-        'Your chat partner has disconnected. You will be reconnected with a new partner soon.'
-      );
+    if (guest !== undefined && room.status === 'open') {
+      room.status = 'closed';
+      await room.save();
+      recentDisc = [...recentDisc, guest, socket.id];
+      io.to(guest).emit('peer:skip', { who: 'Peer' });
+      io.to(socket.id).emit('peer:skip', { who: 'You' });
+    } else {
+      console.log("couldn't find other user");
+    }
+  });
+
+  socket.on('disconnect', async () => {
+    console.log('User got disconnected:', socket.id);
+
+    // Find the room the user was in
+    const room = await Room.findOne({ 'users.socketId': socket.id });
+    if (!room) {
+      console.log('no room');
+      return;
+    }
+
+    const arg = (id) => id.socketId !== socket.id;
+
+    const peerIndex = room.users.findIndex(arg);
+    console.log(peerIndex);
+    let guest = room.users[peerIndex].socketId;
+
+    const argA = (id) => id !== socket.id;
+
+    const argB = (id) => id !== guest;
+
+    if (guest !== undefined && room.status === 'open' && !recentDisc.findIndex(argA) && !recentDisc.findIndex(argB)) {
+      room.status = 'closed';
+      await room.save();
+      console.log(room);
+      io.to(room.users[peerIndex].socketId).emit('peer:skip', { who: 'Peer' });
+      io.to(socket.id).emit('peer:skip', { who: 'You' });
+    } else {
+      console.log("couldn't find other user");
     }
   });
 });

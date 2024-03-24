@@ -2,159 +2,262 @@ import React, { useEffect, useCallback, useState } from 'react';
 import ReactPlayer from 'react-player';
 import peer from '../service/peer';
 
-const VideoChat = ({ roomId, socket, to, setBegin }) => {
+const VideoChat = ({ roomId, socket, to, setBegin, setSocket, setRoomId, setTo }) => {
+  const [pr, setPr] = useState(peer);
   // Chat vars
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
 
-  // Cam vars
+  // Cam var
   const [remoteSocketId, setRemoteSocketId] = useState(null);
-  const [myStream, setMyStream] = useState();
-  const [remoteStream, setRemoteStream] = useState();
+  const [myStream, setMyStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+
+  const [callerlee, setCallerlee] = useState('');
+  const [signalState, setSignalState] = useState('');
+  const [gotTracks, setGotTracks] = useState(false);
+  const [sentStreams, setSentStreams] = useState(false);
 
   const [skOrCl, setSkOrCl] = useState('Start');
 
-  useEffect(() => {
-    setRemoteSocketId(to);
-  }, [to]);
+  const init = useCallback(async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: true,
+    });
 
-  const start = () => {
+    if (!stream) {
+      window.alert("couldn't get camera && || audio");
+    }
+
+    console.log(navigator);
+    console.log(navigator.mediaDevices);
+
+    setMyStream(stream);
+
+    return;
+  }, [pr]);
+
+  const terminateCall = useCallback(
+    async (who) => {
+      //1. Close WebRTC
+
+      if (remoteStream) {
+        await remoteStream.getTracks().forEach((track) => track.stop());
+      }
+      setRemoteStream(null);
+
+      if (myStream) {
+        await myStream.getTracks().forEach((track) => track.stop());
+      }
+
+      setMyStream(null);
+
+      pr.peer.close();
+
+      pr.peer = new RTCPeerConnection({
+        iceServers: [
+          {
+            urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'],
+          },
+        ],
+      }); //3. Then reset all variables: socket, begin, room...
+
+      setPr(pr);
+
+      // Higher level
+      setBegin(false);
+      setSocket(null);
+      setRoomId(null);
+      setTo(null);
+
+      // messages
+      setMessages([`${who.who} disconnected, you will be matched again shortly`]);
+      setInput(''); // if leaves with message in input, wouldn't have reset
+
+      // cam
+      setRemoteSocketId(null);
+      setRemoteStream(null);
+
+      setCallerlee('');
+      setSignalState('');
+      setGotTracks(false);
+      setSentStreams(false);
+
+      await init();
+
+      return;
+    },
+    [remoteStream, setRoomId, setSocket, setTo, setBegin, pr, setPr, init, myStream]
+  );
+
+  const terminate = useCallback(
+    async (who) => {
+      console.log('terminating');
+
+      await terminateCall({ who: who.who });
+
+      pr.peer.addEventListener('track', async (ev) => {
+        const rem = ev.streams;
+        console.log('GOT TRACKS!!');
+        setRemoteStream(rem[0]);
+        setGotTracks(true);
+        console.log(rem[0]);
+      });
+
+      console.log('resetting begin');
+
+      setTimeout(() => {
+        setBegin(true);
+      }, 0.1);
+    },
+    [setBegin, terminateCall]
+  );
+
+  const start = useCallback(async () => {
     if (skOrCl === 'Start') {
       console.log('socket begin');
+      await init();
       setBegin(true);
+      setSkOrCl('Skip');
     } else if (skOrCl === 'Skip') {
-      console.log('skiping');
-      // MISSING FUNCTIONALITY
-
-      /*
-      1. Close WebRTC
-      2. Close socket, then reset all variables: socket, begin, room...
-      3. Emit disconnect, automatically done after socket close
-      4. *SERVER SIDE*: delete room after both users are out
-      */
+      if (socket) {
+        console.log('user:disconnect');
+        socket.emit('user:disconnect');
+      }
     }
-  };
+  }, [skOrCl, init, setBegin, socket]);
+
+  const sendStreams = useCallback(() => {
+    if (myStream) {
+      console.log('made it here');
+      for (const track of myStream.getTracks()) {
+        pr.peer.addTrack(track, myStream);
+      }
+    }
+  }, [myStream, pr]);
 
   const handleCallUser = useCallback(
     async (data) => {
+      setMessages([]);
       console.log(data.peerServer);
+      setCallerlee(data.peerServer);
       if (socket && data.peerServer === 'A') {
-        console.log(`Peer: ${socket.id} sends offer`);
         const room = data.room;
-        setSkOrCl('Skip');
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: true,
-        });
-        const offer = await peer.getOffer();
-        setMyStream(stream);
-        console.log(`Peer: ${socket.id} sets stream`);
+        setRemoteSocketId(data.remote);
+
+        const offer = await pr.getOffer();
+
         socket.emit('user:call', { roomId: room, offer });
-        console.log(`Peer: ${socket.id} sends offer through server`);
-      } else if (data.peerServer === 'B') {
-        console.log('Peer B, wait for call');
+        console.log(`Peer: ${socket.id} Sends offer`);
       }
     },
-    [socket]
+    [socket, pr]
   );
 
   const handleIncommingCall = useCallback(
     async ({ from, offer }) => {
-      console.log(`Peer: ${socket.id} receives offer`);
+      console.log(`Incoming Call`, from, offer);
+
       setRemoteSocketId(from);
       console.log(`Peer: ${socket.id} sets remote socket Id`);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: true,
-      });
-      setMyStream(stream);
-      console.log(`Incoming Call`, from, offer);
-      const ans = await peer.getAnswer(offer);
-      console.log(`Peer: ${socket.id} sets remote description`);
+
+      const ans = await pr.getAnswer(offer);
+
       socket.emit('call:accepted', { to: from, ans });
-      console.log(`Peer: ${socket.id} sends answer`);
+      console.log(`Peer: ${socket.id} Sends answer`);
     },
-    [socket]
+    [socket, pr]
   );
 
-  const sendStreams = useCallback(() => {
-    if (myStream) {
-      for (const track of myStream.getTracks()) {
-        peer.peer.addTrack(track, myStream);
-      }
-    }
-  }, [myStream]);
-
   const handleCallAccepted = useCallback(
-    ({ from, ans }) => {
-      peer.setLocalDescription(ans);
-      console.log(`Peer: ${socket.id} gets accepted`);
+    async ({ from, ans }) => {
+      pr.setLocalDescription(ans);
       sendStreams();
-      console.log(`Peer: ${socket.id} sent streams`);
+      console.log(`Peer: ${socket.id} Adds tracks`);
+      console.log(`Peer: ${socket.id} Sets remote description to ans`);
     },
-    [sendStreams, socket]
+    [socket, sendStreams, pr]
   );
 
   const handleNegoNeeded = useCallback(async () => {
     if (socket) {
       console.log('Emitting negotiation');
-      const offer = await peer.getOffer();
+
+      const offer = await pr.getOffer();
       socket.emit('peer:nego:needed', { offer, to: remoteSocketId });
     }
-  }, [remoteSocketId, socket]);
+  }, [socket, remoteSocketId, pr]);
 
   useEffect(() => {
     // Listen for connection state changes
-    peer.peer.onconnectionstatechange = (event) => {
-      console.log(`Connection state change: ${peer.peer.connectionState}`);
+    pr.peer.onconnectionstatechange = (event) => {
+      console.log(`Connection state change: ${pr.peer.connectionState}`);
     };
 
     // Listen for signaling state changes
-    peer.peer.onsignalingstatechange = (event) => {
-      console.log(`Signaling state change: ${peer.peer.signalingState}`);
+    pr.peer.onsignalingstatechange = (event) => {
+      console.log(`Signaling state change: ${pr.peer.signalingState}`);
+      setSignalState(pr.peer.signalingState);
     };
 
     // Listen for ICE gathering state changes
-    peer.peer.onicegatheringstatechange = (event) => {
-      console.log(`ICE gathering state change: ${peer.peer.iceGatheringState}`);
+    pr.peer.onicegatheringstatechange = (event) => {
+      console.log(`ICE gathering state change: ${pr.peer.iceGatheringState}`);
     };
 
     // Listen for ICE connection state changes
-    peer.peer.oniceconnectionstatechange = (event) => {
-      console.log(`ICE connection state change: ${peer.peer.iceConnectionState}`);
+    pr.peer.oniceconnectionstatechange = (event) => {
+      console.log(`ICE connection state change: ${pr.peer.iceConnectionState}`);
     };
 
-    peer.peer.addEventListener('negotiationneeded', handleNegoNeeded);
-    return () => {
-      peer.peer.removeEventListener('negotiationneeded', handleNegoNeeded);
+    pr.peer.ontrack = (event) => {
+      console.log(`track track:`);
+      console.log(event.streams[0]);
     };
-  }, [handleNegoNeeded]);
+
+    pr.peer.addEventListener('negotiationneeded', handleNegoNeeded);
+    return () => {
+      console.log('removing');
+      pr.peer.removeEventListener('negotiationneeded', handleNegoNeeded);
+    };
+  }, [handleNegoNeeded, socket, pr]);
 
   const handleNegoNeedIncomming = useCallback(
     async ({ from, offer }) => {
       console.log('Answering negotiation');
       if (socket) {
-        const ans = await peer.getAnswer(offer);
+        const ans = await pr.getAnswer(offer);
         socket.emit('peer:nego:done', { to: from, ans });
       }
     },
-    [socket]
+    [socket, pr]
   );
 
-  const handleNegoNeedFinal = useCallback(async ({ ans }) => {
-    console.log('Negotiation confirmation');
-    await peer.setLocalDescription(ans);
-  }, []);
+  const handleNegoNeedFinal = useCallback(
+    async ({ ans }) => {
+      await pr.setLocalDescription(ans);
+      console.log('Negotiation confirmation');
+    },
+    [pr]
+  );
 
   useEffect(() => {
-    peer.peer.addEventListener('track', async (ev) => {
-      const remoteStream = ev.streams;
+    pr.peer.addEventListener('track', async (ev) => {
+      const rem = ev.streams;
       console.log('GOT TRACKS!!');
-      setRemoteStream(remoteStream[0]);
-      console.log(remoteStream[0]);
-      console.log(ev);
+      setRemoteStream(rem[0]);
+      setGotTracks(true);
+      console.log(rem[0]);
     });
-  }, []);
+  }, [pr]);
+
+  useEffect(() => {
+    if (callerlee === 'B' && signalState === 'stable' && gotTracks && !sentStreams) {
+      sendStreams();
+      setSentStreams(true);
+    }
+  }, [callerlee, signalState, gotTracks, sentStreams, sendStreams]);
 
   useEffect(() => {
     if (socket) {
@@ -163,6 +266,7 @@ const VideoChat = ({ roomId, socket, to, setBegin }) => {
       socket.on('call:accepted', handleCallAccepted);
       socket.on('peer:nego:needed', handleNegoNeedIncomming);
       socket.on('peer:nego:final', handleNegoNeedFinal);
+      socket.on('peer:skip', terminate);
 
       return () => {
         socket.off('user:joined', handleCallUser);
@@ -170,9 +274,18 @@ const VideoChat = ({ roomId, socket, to, setBegin }) => {
         socket.off('call:accepted', handleCallAccepted);
         socket.off('peer:nego:needed', handleNegoNeedIncomming);
         socket.off('peer:nego:final', handleNegoNeedFinal);
+        socket.off('peer:skip', terminate);
       };
     }
-  }, [socket, handleCallUser, handleIncommingCall, handleCallAccepted, handleNegoNeedIncomming, handleNegoNeedFinal]);
+  }, [
+    socket,
+    handleCallUser,
+    handleIncommingCall,
+    handleCallAccepted,
+    handleNegoNeedIncomming,
+    handleNegoNeedFinal,
+    terminate,
+  ]);
 
   // Chat funcs
 
@@ -241,6 +354,9 @@ const VideoChat = ({ roomId, socket, to, setBegin }) => {
           </button>
           <button type="submit" onClick={start}>
             {skOrCl}
+          </button>
+          <button type="submit" onClick={sendStreams}>
+            Send Streams
           </button>
         </div>
       </div>
